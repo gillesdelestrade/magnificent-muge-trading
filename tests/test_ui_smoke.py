@@ -13,6 +13,10 @@ def isolated_storage(tmp_path, monkeypatch):
     from mugetrading.storage import db
     from mugetrading.ui import common
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.sqlite")
+    from mugetrading.ai import pipeline
+    from mugetrading.news import cache as news_cache
+    monkeypatch.setattr(pipeline, "AI_CACHE_PATH", tmp_path / "ai-default.sqlite")   # never the real data
+    monkeypatch.setattr(news_cache, "DATA_DIR", tmp_path / "data")
     common.get_db.clear()
     yield
     common.get_db.clear()
@@ -206,3 +210,32 @@ def _run_for(dataset):
     return SimulationRun(result=result, source_id="yahoo", source_label="Yahoo Finance",
                          tickers=dataset["tickers"], universe=dataset["universe"],
                          start=dataset["start"], end=dataset["end"], benchmark=dataset["benchmark"])
+
+
+def test_simulation_with_news_filter(monkeypatch):
+    """The news filter reads stored analyses: a very negative article sells the position."""
+    from mugetrading.ui import page_simulation
+    data = _dataset()
+    days = data["prices"]["AAA.PA"].index
+    table = pd.DataFrame([{
+        "article_id": "a1", "ticker": "AAA.PA", "day": days[31], "sentiment": -0.9,
+        "pertinence": 0.9, "confiance": 0.9}])
+    summary = pd.DataFrame([{"model": "claude-haiku-5-5", "anonymized": 1, "n_articles": 1,
+                             "cost": 0.01, "first_at": "2026-11-12T10:00:00",
+                             "last_at": "2026-11-12T10:00:00"}])
+    monkeypatch.setattr(page_simulation, "analysis_summary", lambda: summary)
+    monkeypatch.setattr(page_simulation, "analysed_news", lambda *a, **k: table)
+
+    at = _page("page_simulation")
+    at.session_state["dataset"] = data
+    at.run()
+    next(c for c in at.checkbox if c.label.startswith("Tenir compte des actualités")).check().run()
+    assert not at.exception, at.exception
+    assert any("connaître" in w.value for w in at.warning)       # knowledge cutoff unknown
+    next(b for b in at.button if b.label == "Lancer la simulation").click().run()
+    assert not at.exception, at.exception
+    run = at.session_state["run"]
+    assert run.result.params.news_filter_enabled
+    # Bought at the open of day 31 (signal of day 30), article that day -> sold at the open of day 32
+    assert run.result.trades["reason"].tolist()[:2] == ["Momentum + Breakout", "Actualité négative"]
+    assert run.result.trades.iloc[1]["date"] == days[32]

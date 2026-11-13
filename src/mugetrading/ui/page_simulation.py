@@ -7,12 +7,13 @@ import streamlit as st
 from ..engine.backtest import run_backtest
 from ..engine.fees import FeeProfile
 from ..engine.stats import benchmark_curve
-from ..formatting import fmt_date, fmt_eur, fmt_pct
+from ..formatting import fmt_date, fmt_eur, fmt_number, fmt_pct
 from ..storage.db import SimulationRun
 from ..strategy.params import (COMBINE_AND, COMBINE_BREAKOUT, COMBINE_MOMENTUM, COMBINE_OR,
                                MIN_CAPITAL, SIZING_PERCENT, SIZING_RISK, StrategyParams)
-from .session import autosave_run, set_current_run
-from .common import MAX_PERIOD, default_capital, default_profile_name, fee_profiles, go_to, page_link
+from .session import analysed_news, analysis_summary, autosave_run, set_current_run
+from .common import (MAX_PERIOD, ai_models, current_news_provider, default_capital,
+                     default_profile_name, fee_profiles, go_to, page_link)
 
 CAPITAL_SHORTCUTS = [500, 1000, 5000, 10000]
 PREVIEW_AMOUNTS = [250, 500, 1000, 2500]
@@ -166,6 +167,92 @@ def _portfolio_section(stops: dict, capital: float) -> dict:
                 sizing_mode=mode, risk_per_trade_pct=risk / 100)
 
 
+def _news_section(dataset: dict) -> tuple[dict, pd.DataFrame | None]:
+    """News filter: decisions drawn from the AI analyses already stored (no AI call here)."""
+    st.subheader("Actualités analysées par l'IA")
+    enabled = st.checkbox(
+        "Tenir compte des actualités analysées par l'IA", value=False,
+        help="Chaque jour simulé, seuls les articles déjà parus ce jour-là sont pris en compte : "
+             "ils servent à décider à la clôture, et l'ordre est passé à l'ouverture du lendemain. "
+             "Un article paru après 17 h 30 compte pour le jour de bourse suivant.")
+    off = dict(news_filter_enabled=False)
+    if not enabled:
+        st.caption("Désactivé : la simulation n'utilise que les cours.")
+        return off, None
+
+    summary = analysis_summary()
+    if summary.empty:
+        st.warning("Aucune analyse IA enregistrée. Récupérez des articles et lancez l'analyse dans "
+                   "l'écran Actualités & IA ; la simulation ne lance elle-même aucune analyse.")
+        page_link("news", "Aller à l'écran Actualités & IA →")
+        return off, None
+    models = {m.id: m for m in ai_models()[0]}
+    rows = list(summary.itertuples())
+
+    def label(i: int) -> str:
+        r = rows[i]
+        name = models[r.model].label if r.model in models else r.model
+        return (f"{name} · sociétés {'anonymisées' if r.anonymized else 'nommées'} "
+                f"({fmt_number(r.n_articles, 0)} articles analysés)")
+
+    choice = rows[st.selectbox("Analyses utilisées", range(len(rows)), format_func=label)]
+    with st.spinner("Lecture des actualités analysées…"):
+        table = analysed_news(dataset, current_news_provider(), choice.model,
+                              bool(choice.anonymized), int(summary["n_articles"].sum()))
+    if table.empty:
+        st.warning("Aucun article analysé ne concerne ces titres sur cette période. Lancez "
+                   "l'analyse dans l'écran Actualités & IA pour ces données.")
+        page_link("news", "Aller à l'écran Actualités & IA →")
+        return off, None
+
+    first, last = table["day"].min().date(), table["day"].max().date()
+    st.caption(f"{fmt_number(table['article_id'].nunique(), 0)} articles analysés sur "
+               f"{table['ticker'].nunique()} titres, du {fmt_date(first)} au {fmt_date(last)}. "
+               "La simulation relit ces analyses : elle n'appelle pas l'IA et ne coûte rien.")
+    if (first - dataset["start"]).days > 10 or (dataset["end"] - last).days > 10:
+        st.warning(f"Les actualités analysées ne couvrent que du {fmt_date(first)} au "
+                   f"{fmt_date(last)}, alors que la simulation va du {fmt_date(dataset['start'])} "
+                   f"au {fmt_date(dataset['end'])}. En dehors de cette plage, il n'y a pas "
+                   "d'actualité : le filtre ne vend rien et applique le réglage « sans actualité "
+                   "récente » aux achats.")
+    cutoff = models[choice.model].knowledge_cutoff if choice.model in models else None
+    if cutoff is None or first <= cutoff:
+        st.warning("⚠️ Le modèle d'IA a pu « connaître » ce qu'ont fait les actions après ces "
+                   "articles" + (f" (ses connaissances vont jusqu'au {fmt_date(cutoff)})" if cutoff
+                                 else " (la date de fin de ses connaissances n'est pas renseignée)")
+                   + ". Les résultats avec actualités risquent d'être trop beaux : en conditions "
+                   "réelles, il ne connaîtra pas la suite.")
+
+    col1, col2 = st.columns(2)
+    with col1, st.container(border=True):
+        st.markdown("**Achats**")
+        window = st.number_input(
+            "Fenêtre (jours de bourse)", 1, 60, 5,
+            help="Nombre de jours de bourse d'actualités pris en compte, jour du signal inclus.")
+        threshold = st.slider(
+            "Sentiment moyen minimum pour acheter", -1.0, 1.0, 0.0, step=0.05,
+            help="De −1 (très négatif) à +1 (très positif). Moyenne des articles de la fenêtre, "
+                 "pondérée par leur pertinence et la confiance de l'IA. En dessous du seuil, "
+                 "l'achat est abandonné et noté dans les signaux non exécutés.")
+        without = st.checkbox("Acheter quand même sans actualité récente", value=True,
+                              help="Sinon, une action sans aucun article dans la fenêtre n'est pas achetée.")
+    with col2, st.container(border=True):
+        st.markdown("**Ventes**")
+        sell = st.checkbox("Vendre sur une actualité très négative", value=True,
+                           help="Vente à l'ouverture du lendemain, motif « Actualité négative », "
+                                "sans attendre le stop.")
+        sell_threshold = st.slider("Sentiment déclenchant la vente (≤)", -1.0, 0.0, -0.5, step=0.05,
+                                   disabled=not sell)
+        pertinence = st.slider("Pertinence minimale de l'article", 0.0, 1.0, 0.7, step=0.05,
+                               disabled=not sell,
+                               help="De 0 à 1 : l'article parle-t-il vraiment de cette société ?")
+    st.caption("Pour mesurer l'effet des actualités, lancez la même simulation avec et sans cette "
+               "option, puis comparez-les dans l'écran Comparaison.")
+    return dict(news_filter_enabled=True, news_buy_window=int(window), news_buy_threshold=threshold,
+                news_buy_without_news=without, news_sell_enabled=sell,
+                news_sell_threshold=sell_threshold, news_sell_min_pertinence=pertinence), table
+
+
 def _fees_section(profiles: list[FeeProfile]) -> tuple[FeeProfile, dict]:
     st.subheader("Frais de transaction")
     names = [p.name for p in profiles]
@@ -199,8 +286,9 @@ def _fees_section(profiles: list[FeeProfile]) -> tuple[FeeProfile, dict]:
     return profile, dict(ttf_enabled=ttf_on, ttf_rate=ttf / 100, slippage=slippage / 100)
 
 
-def _execute(dataset: dict, params: StrategyParams, profile: FeeProfile) -> SimulationRun:
-    result = run_backtest(dataset["prices"], params, profile, dataset["start"], dataset["end"])
+def _execute(dataset: dict, params: StrategyParams, profile: FeeProfile,
+             news: pd.DataFrame | None = None) -> SimulationRun:
+    result = run_backtest(dataset["prices"], params, profile, dataset["start"], dataset["end"], news)
     curve = benchmark_curve(dataset["benchmark_df"], result.equity.index, params.initial_capital)
     return SimulationRun(
         result=result, source_id=dataset["source_id"], source_label=dataset["source_label"],
@@ -208,11 +296,13 @@ def _execute(dataset: dict, params: StrategyParams, profile: FeeProfile) -> Simu
         end=dataset["end"], benchmark=dataset["benchmark"], benchmark_curve=curve)
 
 
-def _compare_platforms(dataset: dict, params: StrategyParams, profiles: list[FeeProfile]) -> pd.DataFrame:
+def _compare_platforms(dataset: dict, params: StrategyParams, profiles: list[FeeProfile],
+                       news: pd.DataFrame | None = None) -> pd.DataFrame:
     rows = []
     bar = st.progress(0.0, text="Comparaison des plateformes…")
     for i, profile in enumerate(profiles):
-        stats = run_backtest(dataset["prices"], params, profile, dataset["start"], dataset["end"]).stats
+        stats = run_backtest(dataset["prices"], params, profile, dataset["start"], dataset["end"],
+                             news).stats
         rows.append({"Plateforme": profile.name, "Total des frais payés": stats["total_fees"],
                      "Valeur finale du portefeuille": stats["final_value"],
                      "Performance nette": stats["total_return_pct"]})
@@ -237,6 +327,7 @@ def render() -> None:
     stops = _stops_section()
     portfolio = _portfolio_section(stops, capital)
     profiles = fee_profiles()
+    news_options, news = _news_section(dataset)
     profile, costs = _fees_section(profiles)
 
     position_amount = capital * portfolio["position_size_pct"]
@@ -252,18 +343,19 @@ def render() -> None:
             f"soit {fmt_pct(profile.brokerage(position_amount) / position_amount)}.")
     if signals is None:
         return
-    params = StrategyParams(initial_capital=capital, **signals, **stops, **portfolio, **costs)
+    params = StrategyParams(initial_capital=capital, **signals, **stops, **portfolio,
+                            **news_options, **costs)
 
     st.divider()
     col1, col2 = st.columns(2)
     if col1.button("Lancer la simulation", type="primary", width="stretch"):
         with st.spinner("Simulation en cours…"):
-            set_current_run(autosave_run(_execute(dataset, params, profile)))
+            set_current_run(autosave_run(_execute(dataset, params, profile, news)))
         st.session_state.pop("platform_comparison", None)
         go_to("results")
     if col2.button("Comparer les plateformes", width="stretch",
                    help="Relance la même simulation avec chaque plateforme : seul le courtier change."):
-        st.session_state["platform_comparison"] = _compare_platforms(dataset, params, profiles)
+        st.session_state["platform_comparison"] = _compare_platforms(dataset, params, profiles, news)
 
     comparison = st.session_state.get("platform_comparison")
     if comparison is not None:

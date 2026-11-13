@@ -11,6 +11,8 @@ Rules (CLAUDE.md §6):
 4. A stock sold today is not bought back today.
 5. At the end, open positions are valued at the last close (or sold, as an option).
 6. Daily valuation at the close: cash + sum(quantity x close).
+7. News filter (optional): the articles attached to day J or before decide at the close of
+   J; a blocked purchase is logged, a very negative article sells at the open of J+1.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ from ..broker.base import BUY, SELL, Fill, Order
 from ..broker.paper import PaperBroker
 from ..data.provider import adjusted_ohlc
 from ..strategy.params import StrategyParams
+from ..strategy.news_filter import REASON_NEGATIVE_NEWS, news_signals
 from ..strategy.signals import compute_signals
 from ..strategy.stops import REASON_TAKE_PROFIT, stop_level, target_level
 from .fees import NO_FEES, FeeCalculator, FeeProfile
@@ -33,6 +36,7 @@ REASON_END = "Fin de période"
 SKIP_NO_CASH = "Liquidités insuffisantes"
 SKIP_MAX_POSITIONS = "Nombre maximum de positions atteint"
 SKIP_SOLD_TODAY = "Titre vendu le jour même"
+SKIP_NEWS = "Actualités défavorables"
 
 TRADE_COLUMNS = [
     "date", "ticker", "side", "reason", "quantity", "price", "gross", "brokerage", "ttf", "fees",
@@ -94,14 +98,20 @@ def run_backtest(
     fee_profile: FeeProfile = NO_FEES,
     start: date | None = None,
     end: date | None = None,
+    news: pd.DataFrame | None = None,
 ) -> BacktestResult:
     """Simulate the strategy on ``prices`` (ticker -> daily bars, warm-up included).
 
-    Bars before ``start`` are only used to compute the indicators.
+    Bars before ``start`` are only used to compute the indicators. ``news`` (analysed
+    articles: ticker, day, sentiment, pertinence, confiance) is only read when the news
+    filter of ``params`` is enabled.
     """
     frames = _prepare(prices)
     bars: dict[str, dict[pd.Timestamp, tuple[float, float, float, float]]] = {}
-    candidates: dict[pd.Timestamp, list[tuple[float, str, str]]] = {}
+    candidates: dict[pd.Timestamp, list[tuple[float, str, str, bool]]] = {}
+    news_sells: dict[pd.Timestamp, set[str]] = {}
+    news_by_ticker = ({t: g for t, g in news.groupby("ticker")}
+                      if params.news_filter_enabled and news is not None and not news.empty else {})
     calendar = pd.DatetimeIndex([])
 
     for ticker, df in frames.items():
@@ -112,11 +122,16 @@ def run_backtest(
         calendar = calendar.union(df.index)
         signals = compute_signals(df, params)
         # No look-ahead: the signal of bar J is only visible on the stock's next bar (J+1).
-        previous = signals[["buy_signal", "momentum", "reason"]].shift(1)
-        for ts, mom, reason in previous.loc[previous["buy_signal"].eq(True),
-                                           ["momentum", "reason"]].itertuples():
+        # The news of bar J follow the same rule.
+        signals[["news_ok", "news_sell"]] = news_signals(
+            df.index, news_by_ticker.get(ticker), params)[["buy_ok", "sell"]]
+        previous = signals[["buy_signal", "momentum", "reason", "news_ok", "news_sell"]].shift(1)
+        for ts, mom, reason, news_ok in previous.loc[
+                previous["buy_signal"].eq(True), ["momentum", "reason", "news_ok"]].itertuples():
             mom = -math.inf if pd.isna(mom) else float(mom)
-            candidates.setdefault(ts, []).append((mom, ticker, reason))
+            candidates.setdefault(ts, []).append((mom, ticker, reason, bool(news_ok)))
+        for ts in previous.index[previous["news_sell"].eq(True)]:
+            news_sells.setdefault(ts, set()).add(ticker)
 
     if start is not None:
         calendar = calendar[calendar >= pd.Timestamp(start)]
@@ -164,14 +179,16 @@ def run_backtest(
         for ticker in list(portfolio.positions):
             position = portfolio.positions[ticker]
             bar = day_bars.get(ticker)
-            if bar is None or (position.stop is None and position.target is None):
+            if bar is None:
                 continue
             stop, target = position.stop, position.target
             if stop is not None:
                 stops.append({"date": ts, "ticker": ticker, "stop": stop,
                               "reason": position.stop_reason})
             open_, high, low, _ = bar
-            if stop is not None and open_ <= stop:
+            if ticker in news_sells.get(ts, ()):
+                price, reason = open_, REASON_NEGATIVE_NEWS      # decided yesterday: at the open
+            elif stop is not None and open_ <= stop:
                 price, reason = open_, position.stop_reason      # gap: opened below the stop
             elif target is not None and open_ >= target:
                 price, reason = open_, REASON_TAKE_PROFIT        # gap: opened above the target
@@ -187,7 +204,8 @@ def run_backtest(
             record(fill, open_marks)
 
         # 2. Buys: signals of the previous bar, strongest momentum first
-        for mom, ticker, reason in sorted(candidates.get(ts, []), key=lambda c: (-c[0], c[1])):
+        for mom, ticker, reason, news_ok in sorted(candidates.get(ts, []),
+                                                   key=lambda c: (-c[0], c[1])):
             if ticker in portfolio.positions:
                 continue
             base = {"date": ts, "ticker": ticker, "signal": reason}
@@ -196,6 +214,9 @@ def run_backtest(
                 continue
             if len(portfolio.positions) >= params.max_positions:
                 skipped.append({**base, "cause": SKIP_MAX_POSITIONS})
+                continue
+            if not news_ok:      # logged only when the news really prevented the purchase
+                skipped.append({**base, "cause": SKIP_NEWS})
                 continue
             price = day_bars[ticker][0] * (1.0 + params.slippage)
             marks = mark_prices(day_bars, use_open=True)

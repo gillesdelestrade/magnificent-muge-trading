@@ -88,6 +88,26 @@ class AnalysisCache:
                                    "anonymized": bool(row[4]), "analyses": json.loads(row[5])}
         return out
 
+    def get_by_articles(self, article_ids, model_id: str, anonymized: bool) -> pd.DataFrame:
+        """Stored analyses of these articles for one model, one row per (article, ticker).
+
+        Looked up by article identifier (much faster than rebuilding every prompt); if an
+        article was analysed several times, the most recent analysis is kept.
+        """
+        wanted = set(map(str, article_ids))
+        rows = []
+        with closing(sqlite3.connect(self.path)) as con:
+            for article_id, result in con.execute(
+                    "SELECT article_id, result FROM analyses WHERE model = ? AND anonymized = ? "
+                    "AND prompt_version = ? ORDER BY created_at", (model_id, int(anonymized),
+                                                                  PROMPT_VERSION)):
+                if article_id in wanted:
+                    for item in json.loads(result):
+                        rows.append({**item, "article_id": article_id, "model": model_id,
+                                     "prompt_version": PROMPT_VERSION, "anonymized": anonymized})
+        frame = pd.DataFrame(rows, columns=RESULT_COLUMNS)
+        return frame.drop_duplicates(["article_id", "ticker"], keep="last").reset_index(drop=True)
+
     def summary(self) -> pd.DataFrame:
         """What the cache holds, per model: number of articles, cost, first and last analysis."""
         with closing(sqlite3.connect(self.path)) as con:

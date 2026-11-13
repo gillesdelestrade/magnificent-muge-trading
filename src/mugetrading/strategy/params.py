@@ -39,6 +39,14 @@ class StrategyParams:
     # Position sizing: with SIZING_RISK, position_size_pct becomes the maximum size
     sizing_mode: str = SIZING_PERCENT
     risk_per_trade_pct: float = 0.01       # share of the portfolio lost if the initial stop is hit
+    # News filter (AI analysis of the articles), off by default
+    news_filter_enabled: bool = False
+    news_buy_window: int = 5               # trading days, day J included
+    news_buy_threshold: float = 0.0        # minimum mean sentiment over the window to buy
+    news_buy_without_news: bool = True     # buy anyway when the window holds no article
+    news_sell_enabled: bool = True         # sell a held stock on a very negative article
+    news_sell_threshold: float = -0.5
+    news_sell_min_pertinence: float = 0.7
     # Costs independent from the broker
     ttf_enabled: bool = True
     ttf_rate: float = 0.004
@@ -59,6 +67,8 @@ class StrategyParams:
             raise ValueError("max_positions must be >= 1")
         if self.take_profit_enabled and self.take_profit_pct <= 0:
             raise ValueError("Take profit must be > 0")
+        if self.news_buy_window < 1:
+            raise ValueError("News window must be >= 1")
         if self.sizing_mode not in SIZING_MODES:
             raise ValueError(f"Unknown sizing mode: {self.sizing_mode}")
         if self.sizing_mode == SIZING_RISK:

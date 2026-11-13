@@ -81,6 +81,15 @@ def _sizing_text(p) -> str:
     return f"{fmt_pct(p.position_size_pct, 0)} du portefeuille"
 
 
+def _news_text(p) -> str:
+    if not p.news_filter_enabled:
+        return "non utilisées"
+    text = f"achat si sentiment ≥ {fmt_number(p.news_buy_threshold, 2)} sur {p.news_buy_window} j"
+    if p.news_sell_enabled:
+        text += f" · vente si ≤ {fmt_number(p.news_sell_threshold, 2)}"
+    return text
+
+
 def summary_rows(run: SimulationRun) -> dict[str, str]:
     """Indicators of a simulation as formatted text (comparison table)."""
     s, p = run.result.stats, run.result.params
@@ -100,6 +109,7 @@ def summary_rows(run: SimulationRun) -> dict[str, str]:
         "Perte moyenne": fmt_eur_signed(s["avg_loss"]),
         "Stops": _stops_text(p),
         "Taille d'une position": _sizing_text(p),
+        "Actualités (IA)": _news_text(p),
         "Plateforme": run.result.fee_profile.name,
         "Total des frais": f"{fmt_eur(s['total_fees'])} ({fmt_pct(s['fees_pct_capital'])} du capital)",
         "Perte maximale depuis un sommet": fmt_pct(s["max_drawdown"]),

@@ -453,6 +453,20 @@ Si l'analyse révèle une relation exploitable, ajouter aux paramètres de strat
 - n'acheter que si le sentiment moyen des N derniers jours est ≥ un seuil ;
 - vendre (motif « Actualité négative ») si une information très négative et pertinente tombe sur une ligne détenue.
 
+Implémenté (option « Tenir compte des actualités analysées par l'IA » de l'écran Simulation) :
+
+| Paramètre | Définition | Défaut |
+|---|---|---|
+| Fenêtre | Nombre de jours de bourse d'actualités pris en compte, jour du signal inclus | 5 j |
+| Sentiment moyen minimum pour acheter | Moyenne des articles de la fenêtre, pondérée par pertinence × confiance | 0 |
+| Acheter sans actualité récente | Si la fenêtre ne contient aucun article | Oui |
+| Vente sur actualité très négative | Article du jour avec sentiment ≤ seuil et pertinence ≥ minimum | Oui ; −0,5 ; 0,7 |
+
+- Le simulateur **relit les analyses déjà enregistrées** (cache IA) : il ne lance aucun appel à l'IA. Le moteur reste une fonction pure : `run_backtest(prices, params, …, news=tableau des articles analysés)`.
+- Seuls les articles rattachés au jour J ou avant (règle des 17 h 30, §7 bis.4) servent à la décision prise à la clôture de J ; l'ordre est exécuté à l'ouverture de J+1. La vente sur actualité se fait au cours d'ouverture.
+- Un achat abandonné à cause des actualités est noté dans le journal des signaux non exécutés (« Actualités défavorables »), uniquement s'il aurait réellement eu lieu.
+- Avertissements affichés : plage couverte par les analyses plus courte que la simulation ; modèle pouvant connaître la suite (date de fin des connaissances).
+
 Ces règles respectent l'exécution à J+1 du §6. La comparaison avec / sans filtre se fait avec la fonction de comparaison de simulations (§7.4).
 
 ---
@@ -499,7 +513,7 @@ Le choix du courtier, l'authentification, le mode « signal du soir → ordre à
 7. Actualités : interface `NewsProvider`, import CSV, puis EODHD News ; cache et rattachement aux jours de bourse.
 8. Analyse IA : interface `SentimentAnalyzer`, client Claude (Haiku par défaut), schéma JSON, anonymisation, cache, estimation du coût ; tests avec faux client.
 9. Écran « Actualités & IA » : corrélations, étude d'événement, graphiques, export.
-10. (Seulement si l'étape 9 est concluante) Filtre actualités dans le simulateur (§7 bis.6).
+10. Filtre actualités dans le simulateur (§7 bis.6) — fait à la demande, à utiliser avec prudence tant que l'étape 9 n'a pas montré de relation exploitable.
 
 À chaque étape : faire tourner les tests, puis montrer comment lancer l'application.
 

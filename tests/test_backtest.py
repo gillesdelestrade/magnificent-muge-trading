@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from conftest import flat, make_prices
-from mugetrading.engine.backtest import (REASON_END, SKIP_MAX_POSITIONS, SKIP_NO_CASH,
+from mugetrading.engine.backtest import (REASON_END, SKIP_MAX_POSITIONS, SKIP_NEWS, SKIP_NO_CASH,
                                          run_backtest)
 from mugetrading.engine.fees import FeeBracket, FeeProfile, get_profile, load_profiles
 from mugetrading.strategy.params import COMBINE_BREAKOUT, COMBINE_MOMENTUM, StrategyParams
@@ -301,3 +301,97 @@ def test_old_saved_parameters_still_load():
            if k not in ("take_profit_enabled", "take_profit_pct", "sizing_mode", "risk_per_trade_pct")}
     restored = StrategyParams.from_dict(old)
     assert not restored.take_profit_enabled and restored.sizing_mode == "percent"
+
+
+# -- news filter (AI analysis of the articles) ---------------------------------------------------
+
+def news(df, *rows):
+    """rows: (day index, sentiment, pertinence) for stock AAA."""
+    return pd.DataFrame([{"ticker": "AAA", "day": day(df, i), "sentiment": s, "pertinence": p,
+                          "confiance": 1.0} for i, s, p in rows],
+                        columns=["ticker", "day", "sentiment", "pertinence", "confiance"])
+
+
+NEWS_DF = make_prices(BREAKOUT + [(107, 108, 106, 107), (104, 105, 103, 104), (104, 104, 104, 104)])
+
+
+def news_params(**kw):
+    return params(news_filter_enabled=True, **kw)
+
+
+def test_news_filter_disabled_changes_nothing():
+    bad = news(NEWS_DF, (4, -1.0, 1.0))
+    plain = run_backtest({"AAA": NEWS_DF}, params())
+    with_news = run_backtest({"AAA": NEWS_DF}, params(), news=bad)
+    pd.testing.assert_frame_equal(plain.trades, with_news.trades)
+
+
+def test_negative_news_on_signal_day_blocks_the_purchase():
+    r = run_backtest({"AAA": NEWS_DF}, news_params(), news=news(NEWS_DF, (4, -0.3, 1.0)))
+    assert r.trades.empty
+    assert r.skipped.iloc[0][["date", "cause"]].tolist() == [day(NEWS_DF, 5), SKIP_NEWS]
+
+
+def test_positive_news_allows_the_purchase():
+    r = run_backtest({"AAA": NEWS_DF}, news_params(), news=news(NEWS_DF, (4, 0.4, 1.0)))
+    assert r.trades.iloc[0]["date"] == day(NEWS_DF, 5)
+
+
+def test_window_mean_is_weighted_by_pertinence():
+    # Day 3: -0.8 with pertinence 0.25, day 4: +0.4 with pertinence 1 -> (-0.2 + 0.4) / 1.25 = +0.16
+    rows = news(NEWS_DF, (3, -0.8, 0.25), (4, 0.4, 1.0))
+    assert len(run_backtest({"AAA": NEWS_DF}, news_params(news_buy_threshold=0.1), news=rows).trades) >= 1
+    assert run_backtest({"AAA": NEWS_DF}, news_params(news_buy_threshold=0.2), news=rows).trades.empty
+
+
+def test_old_news_leaves_the_window():
+    rows = news(NEWS_DF, (2, -1.0, 1.0))        # signal on day 4
+    blocked = run_backtest({"AAA": NEWS_DF}, news_params(news_buy_window=3), news=rows)   # days 2-4
+    allowed = run_backtest({"AAA": NEWS_DF}, news_params(news_buy_window=2), news=rows)   # days 3-4
+    # Blocked on day 5; the signal of day 5 (window = days 3-5) buys on day 6
+    assert blocked.trades.iloc[0]["date"] == day(NEWS_DF, 6)
+    assert allowed.trades.iloc[0]["date"] == day(NEWS_DF, 5)
+
+
+def test_without_news_the_purchase_follows_the_option():
+    empty = news(NEWS_DF)
+    assert len(run_backtest({"AAA": NEWS_DF}, news_params(), news=empty).trades) >= 1
+    assert run_backtest({"AAA": NEWS_DF}, news_params(news_buy_without_news=False), news=empty).trades.empty
+    assert run_backtest({"AAA": NEWS_DF}, news_params(news_buy_without_news=False), news=None).trades.empty
+
+
+def test_news_of_the_execution_day_are_not_known_when_buying():
+    # Signal on day 4, bought at the open of day 5: an article of day 5 cannot block it...
+    r = run_backtest({"AAA": NEWS_DF}, news_params(), news=news(NEWS_DF, (5, -1.0, 1.0)))
+    assert r.trades.iloc[0][["date", "side"]].tolist() == [day(NEWS_DF, 5), "buy"]
+    # ...but it sells the position at the open of day 6
+    sell = r.trades.iloc[1]
+    assert sell[["date", "reason", "price"]].tolist() == [day(NEWS_DF, 6), "Actualité négative", 107.0]
+
+
+def test_very_negative_relevant_news_sells_at_next_open():
+    r = run_backtest({"AAA": NEWS_DF}, news_params(), news=news(NEWS_DF, (6, -0.8, 0.9)))
+    sell = r.trades.iloc[1]
+    assert sell[["date", "reason", "price"]].tolist() == [day(NEWS_DF, 7), "Actualité négative", 104.0]
+    assert sell["pnl"] == pytest.approx(4 * (104 - 106))
+
+
+@pytest.mark.parametrize("rows, options", [
+    ([(6, -0.8, 0.5)], {}),                                  # not relevant enough
+    ([(6, -0.4, 0.9)], {}),                                  # not negative enough
+    ([(6, -0.8, 0.9)], {"news_sell_enabled": False}),        # sale on news switched off
+])
+def test_news_that_do_not_sell(rows, options):
+    r = run_backtest({"AAA": NEWS_DF}, news_params(**options), news=news(NEWS_DF, *rows))
+    assert len(r.trades) == 1
+
+
+def test_news_block_is_logged_only_when_it_prevents_a_purchase():
+    # Portfolio limited to 1 position: BBB (stronger momentum) takes it; AAA has bad news but
+    # would not have been bought anyway -> logged as "maximum positions", not as news.
+    strong = BREAKOUT[:4] + [(100, 110, 100, 110), (111, 112, 110, 111), (111, 111, 111, 111)]
+    prices = {"AAA": make_prices(BREAKOUT + [(107, 107, 107, 107)]), "BBB": make_prices(strong)}
+    bad = news(prices["AAA"], (4, -0.3, 1.0))
+    r = run_backtest(prices, news_params(max_positions=1), news=bad)
+    assert r.trades["ticker"].tolist() == ["BBB"]
+    assert r.skipped.iloc[0][["ticker", "cause"]].tolist() == ["AAA", SKIP_MAX_POSITIONS]

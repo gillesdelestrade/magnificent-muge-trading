@@ -138,3 +138,38 @@ def restore_session() -> None:
                 restore()
             except Exception:
                 pass
+
+
+# -- analysed news for the simulator ------------------------------------------------------
+
+def analysis_summary() -> pd.DataFrame:
+    """AI analyses stored on disk, per model and anonymisation setting."""
+    from ..ai.pipeline import AnalysisCache
+    try:
+        return AnalysisCache().summary()
+    except Exception:
+        return pd.DataFrame(columns=["model", "anonymized", "n_articles", "cost", "first_at", "last_at"])
+
+
+def analysed_news(dataset: dict, provider, model_id: str, anonymized: bool, stamp: int) -> pd.DataFrame:
+    """Analysed articles of the dataset's stocks, each attached to its trading day
+    (analysis/sentiment_daily.article_table). Read from the local caches only: no download
+    and no AI call. ``stamp`` changes when new analyses are stored, to refresh the copy
+    kept in the session."""
+    from datetime import timedelta
+
+    from ..ai.pipeline import AnalysisCache
+    from ..analysis.sentiment_daily import article_table
+
+    key = (provider.id, tuple(dataset["tickers"]), dataset["start"], dataset["end"],
+           model_id, anonymized, stamp)
+    kept = st.session_state.get("_analysed_news")
+    if kept and kept[0] == key:
+        return kept[1]
+    # A margin before the start feeds the sentiment window of the first days
+    report = collect_news(NewsCache(provider), dataset["tickers"],
+                          dataset["start"] - timedelta(days=45), dataset["end"], offline=True)
+    results = AnalysisCache().get_by_articles(report.articles["id"].unique(), model_id, anonymized)
+    table = article_table(report.articles, results, dataset["prices"])
+    st.session_state["_analysed_news"] = (key, table)
+    return table

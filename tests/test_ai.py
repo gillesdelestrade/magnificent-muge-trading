@@ -133,6 +133,14 @@ def test_cache_prevents_any_second_call(tmp_path):
     assert set(results["prompt_version"]) == {"v1"}                     # out-of-list entry dropped
     assert results["anonymized"].all()
 
+    # Same rows when looked up by article identifier (path used by the simulator)
+    by_id = cache.get_by_articles([j.article_id for j in jobs], "claude-haiku-5-5", True)
+    key = ["article_id", "ticker"]
+    pd.testing.assert_frame_equal(by_id.sort_values(key).reset_index(drop=True),
+                                  results.sort_values(key).reset_index(drop=True))
+    assert cache.get_by_articles([jobs[0].article_id], "claude-haiku-5-5", False).empty
+    assert cache.get_by_articles(["unknown"], "claude-haiku-5-5", True).empty
+
 
 def test_cost_estimate_and_spending_cap(tmp_path):
     cache = AnalysisCache(tmp_path / "ai.sqlite")
