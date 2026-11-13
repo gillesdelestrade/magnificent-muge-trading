@@ -10,12 +10,16 @@ from ..engine.stats import benchmark_curve
 from ..formatting import fmt_date, fmt_eur, fmt_pct
 from ..storage.db import SimulationRun
 from ..strategy.params import (COMBINE_AND, COMBINE_BREAKOUT, COMBINE_MOMENTUM, COMBINE_OR,
-                               MIN_CAPITAL, StrategyParams)
+                               MIN_CAPITAL, SIZING_PERCENT, SIZING_RISK, StrategyParams)
 from .session import autosave_run, set_current_run
 from .common import MAX_PERIOD, default_capital, default_profile_name, fee_profiles, go_to, page_link
 
 CAPITAL_SHORTCUTS = [500, 1000, 5000, 10000]
 PREVIEW_AMOUNTS = [250, 500, 1000, 2500]
+SIZING_LABELS = {
+    SIZING_PERCENT: "Part fixe du portefeuille",
+    SIZING_RISK: "Selon la perte maximale acceptée par trade",
+}
 COMBINATION_LABELS = {
     COMBINE_AND: "Les deux (ET)",
     COMBINE_OR: "L'un ou l'autre (OU)",
@@ -81,7 +85,7 @@ def _signals_section() -> dict | None:
 
 def _stops_section() -> dict:
     st.subheader("Signaux de vente")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1, st.container(border=True):
         use_sl = st.checkbox("Stop loss", value=True,
                              help="Vendre si le cours tombe trop bas par rapport au prix d'achat.")
@@ -92,19 +96,63 @@ def _stops_section() -> dict:
                              help="Le seuil de vente monte avec le cours et ne redescend jamais.")
         ts = st.number_input("Stop suiveur (%)", 0.5, 90.0, 10.0, step=0.5, disabled=not use_ts,
                              help="Vente si le cours tombe à plus haut atteint depuis l'achat × (1 − y %).")
+    with col3, st.container(border=True):
+        use_tp = st.checkbox("Prise de bénéfices", value=False,
+                             help="Vendre dès que le gain visé est atteint, sans attendre un stop.")
+        tp = st.number_input("Objectif de gain (%)", 0.5, 500.0, 20.0, step=0.5, disabled=not use_tp,
+                             help="Vente si le cours monte à prix d'achat × (1 + z %).")
     if use_sl and use_ts:
         st.caption("Les deux stops sont actifs : chaque jour, le niveau le plus élevé des deux s'applique.")
+    if use_tp:
+        st.caption("Si le stop et l'objectif de gain sont touchés le même jour, la simulation "
+                   "retient le stop (hypothèse prudente : les cours journaliers ne disent pas "
+                   "lequel a été touché en premier).")
     if not use_sl and not use_ts:
-        st.warning("Sans aucun stop, les actions achetées ne sont jamais revendues.")
+        st.warning("Sans aucun stop, les actions achetées ne sont jamais revendues."
+                   if not use_tp else
+                   "Sans aucun stop, une action qui baisse n'est jamais revendue.")
     return dict(stop_loss_enabled=use_sl, stop_loss_pct=sl / 100,
-                trailing_stop_enabled=use_ts, trailing_stop_pct=ts / 100)
+                trailing_stop_enabled=use_ts, trailing_stop_pct=ts / 100,
+                take_profit_enabled=use_tp, take_profit_pct=tp / 100)
 
 
-def _portfolio_section() -> dict:
+def _portfolio_section(stops: dict, capital: float) -> dict:
     st.subheader("Gestion du portefeuille")
+    stop_pcts = [stops[f"{k}_pct"] for k in ("stop_loss", "trailing_stop") if stops[f"{k}_enabled"]]
+    mode = st.radio(
+        "Calcul de la taille d'une position", [SIZING_PERCENT, SIZING_RISK], horizontal=True,
+        format_func=SIZING_LABELS.get,
+        help="Part fixe : chaque achat représente le même pourcentage du portefeuille. "
+             "Selon la perte maximale : la taille est calculée pour que la perte, si le stop "
+             "est touché, ne dépasse pas le pourcentage du portefeuille que vous fixez.")
+    risk = 1.0
+    if mode == SIZING_RISK and not stop_pcts:
+        st.error("Ce calcul a besoin d'un stop : activez le stop loss ou le stop suiveur. "
+                 "En attendant, la part fixe est utilisée.")
+        mode = SIZING_PERCENT
     col1, col2, col3 = st.columns(3)
-    size = col1.slider("Taille d'une position (% du portefeuille)", 5, 100, 25, step=5,
-                       help="Part de la valeur du portefeuille investie à chaque achat.")
+    if mode == SIZING_RISK:
+        risk = col1.number_input(
+            "Perte maximale par trade (% du portefeuille)", 0.1, 20.0, 1.0, step=0.1, format="%.1f",
+            help="Perte acceptée sur un trade si le stop est touché, hors frais. Un trou de "
+                 "cotation à l'ouverture peut faire perdre davantage.")
+    size = col1.slider(
+        "Taille maximale d'une position (% du portefeuille)" if mode == SIZING_RISK
+        else "Taille d'une position (% du portefeuille)", 5, 100, 25, step=5,
+        help="Part de la valeur du portefeuille investie à chaque achat."
+        if mode == SIZING_PERCENT else
+        "Plafond : même si le calcul selon la perte maximale donne plus, un achat ne "
+        "dépasse jamais cette part du portefeuille.")
+    if mode == SIZING_RISK:
+        stop_pct = min(stop_pcts)
+        wanted = risk / 100 / stop_pct
+        share = min(wanted, size / 100)
+        text = (f"Avec un stop à {fmt_pct(stop_pct, 1)} du prix d'achat, risquer "
+                f"{fmt_pct(risk / 100, 1)} revient à investir {fmt_pct(wanted, 1)} du "
+                f"portefeuille par achat")
+        if wanted > size / 100:
+            text += f", ramenés à {fmt_pct(size / 100, 0)} par le plafond"
+        st.caption(f"{text} : environ {fmt_eur(capital * share)} au départ.")
     max_pos = col2.number_input("Nombre max de positions simultanées", 1, 50, 4,
                                 help="Nombre maximum d'actions différentes détenues en même temps.")
     fractions = col3.checkbox("Autoriser les fractions d'actions", value=False,
@@ -114,7 +162,8 @@ def _portfolio_section() -> dict:
                                    "au dernier cours de clôture.")
     st.caption("Si plusieurs signaux tombent le même jour, les actions au plus fort momentum passent en premier.")
     return dict(position_size_pct=size / 100, max_positions=int(max_pos),
-                allow_fractions=fractions, liquidate_at_end=liquidate)
+                allow_fractions=fractions, liquidate_at_end=liquidate,
+                sizing_mode=mode, risk_per_trade_pct=risk / 100)
 
 
 def _fees_section(profiles: list[FeeProfile]) -> tuple[FeeProfile, dict]:
@@ -186,11 +235,16 @@ def render() -> None:
     capital = _capital_section()
     signals = _signals_section()
     stops = _stops_section()
-    portfolio = _portfolio_section()
+    portfolio = _portfolio_section(stops, capital)
     profiles = fee_profiles()
     profile, costs = _fees_section(profiles)
 
     position_amount = capital * portfolio["position_size_pct"]
+    if portfolio["sizing_mode"] == SIZING_RISK:
+        closest_stop = min(stops[f"{k}_pct"] for k in ("stop_loss", "trailing_stop")
+                           if stops[f"{k}_enabled"])
+        position_amount = min(position_amount,
+                              capital * portfolio["risk_per_trade_pct"] / closest_stop)
     if profile.brokerage(position_amount) > 0.01 * position_amount:
         st.warning(
             "Avec ce capital, les frais vont peser lourd sur chaque opération : "

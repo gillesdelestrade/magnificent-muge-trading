@@ -4,6 +4,9 @@ Rules (CLAUDE.md §6):
 1. A signal computed on the close of day J is executed at the open of day J+1.
 2. Stops are checked every day: open below the stop -> sold at the open (gap);
    otherwise low touching the stop -> sold at the stop level.
+   Take profit: open above the target -> sold at the open; otherwise high touching the
+   target -> sold at the target. If the stop and the target are both touched on the same
+   day, the stop is assumed to come first (daily bars do not tell the order).
 3. Each day: sells first, then buys with the cash available after the sells.
 4. A stock sold today is not bought back today.
 5. At the end, open positions are valued at the last close (or sold, as an option).
@@ -22,7 +25,7 @@ from ..broker.paper import PaperBroker
 from ..data.provider import adjusted_ohlc
 from ..strategy.params import StrategyParams
 from ..strategy.signals import compute_signals
-from ..strategy.stops import stop_level
+from ..strategy.stops import REASON_TAKE_PROFIT, stop_level, target_level
 from .fees import NO_FEES, FeeCalculator, FeeProfile
 from .stats import compute_stats
 
@@ -156,25 +159,30 @@ def run_backtest(
         day_bars = {t: b[ts] for t, b in bars.items() if ts in b}
         open_marks = mark_prices(day_bars, use_open=True)
 
-        # 1. Sells: stops computed the day before
+        # 1. Sells: stops and take-profit levels computed the day before
         sold_today: set[str] = set()
         for ticker in list(portfolio.positions):
             position = portfolio.positions[ticker]
             bar = day_bars.get(ticker)
-            if bar is None or position.stop is None:
+            if bar is None or (position.stop is None and position.target is None):
                 continue
-            stops.append({"date": ts, "ticker": ticker, "stop": position.stop,
-                          "reason": position.stop_reason})
-            open_, _, low, _ = bar
-            if open_ <= position.stop:
-                price = open_          # gap: opened below the stop
-            elif low <= position.stop:
-                price = position.stop
+            stop, target = position.stop, position.target
+            if stop is not None:
+                stops.append({"date": ts, "ticker": ticker, "stop": stop,
+                              "reason": position.stop_reason})
+            open_, high, low, _ = bar
+            if stop is not None and open_ <= stop:
+                price, reason = open_, position.stop_reason      # gap: opened below the stop
+            elif target is not None and open_ >= target:
+                price, reason = open_, REASON_TAKE_PROFIT        # gap: opened above the target
+            elif stop is not None and low <= stop:
+                price, reason = stop, position.stop_reason       # stop first if both are touched
+            elif target is not None and high >= target:
+                price, reason = target, REASON_TAKE_PROFIT
             else:
                 continue
             price *= 1.0 - params.slippage
-            fill = broker.place_order(
-                Order(ticker, SELL, position.quantity, price, day, position.stop_reason))
+            fill = broker.place_order(Order(ticker, SELL, position.quantity, price, day, reason))
             sold_today.add(ticker)
             record(fill, open_marks)
 
@@ -191,7 +199,7 @@ def run_backtest(
                 continue
             price = day_bars[ticker][0] * (1.0 + params.slippage)
             marks = mark_prices(day_bars, use_open=True)
-            budget = min(params.position_size_pct * portfolio.value(marks), portfolio.cash)
+            budget = min(params.position_budget_pct * portfolio.value(marks), portfolio.cash)
             quantity = _size_order(broker, ticker, price, day, budget, params.allow_fractions)
             if quantity <= 0:
                 skipped.append({**base, "cause": SKIP_NO_CASH})
@@ -208,6 +216,7 @@ def run_backtest(
             position.highest = max(position.highest, bar[1])
             position.stop, position.stop_reason = stop_level(
                 position.entry_price, position.highest, params)
+            position.target = target_level(position.entry_price, params)
         for ticker in portfolio.positions:
             last_close.setdefault(ticker, portfolio.positions[ticker].entry_price)
 

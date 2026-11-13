@@ -202,10 +202,12 @@ Chaque signal doit pouvoir être activé/désactivé.
 |---|---|---|
 | **Stop loss** | Vente si le cours tombe à `prix d'achat × (1 − x %)` | 8 % |
 | **Stop suiveur** | Vente si le cours tombe à `plus haut atteint depuis l'achat × (1 − y %)` | 10 % |
+| **Prise de bénéfices** | Vente si le cours monte à `prix d'achat × (1 + z %)` | 20 %, désactivée |
 
 - Chaque stop peut être activé/désactivé.
 - Si les deux sont actifs, le niveau de stop retenu chaque jour est le **plus élevé** des deux.
 - Le plus haut du stop suiveur est mis à jour avec le **plus haut du jour**, mais le nouveau niveau de stop ne s'applique qu'**à partir du lendemain** (pas d'utilisation du futur).
+- La prise de bénéfices s'applique elle aussi à partir du lendemain de l'achat. Si l'action ouvre au-dessus de l'objectif, vente au cours d'ouverture. Si le stop et l'objectif sont touchés le même jour, on retient le **stop** (hypothèse prudente : les cours journaliers ne disent pas lequel a été touché en premier).
 
 ### 5.3 Gestion du portefeuille
 
@@ -213,6 +215,7 @@ Chaque signal doit pouvoir être activé/désactivé.
 |---|---|---|
 | **Capital de départ** | Liquidités au départ (voir précisions ci-dessous) | 1 000 € |
 | Taille d'une position | % de la valeur du portefeuille investi par achat | 25 % |
+| Calcul de la taille | `Part fixe` (ci-dessus) ou `Selon la perte maximale` : taille = `perte max. % × valeur du portefeuille ÷ distance au stop %`, plafonnée par la taille d'une position | Part fixe ; perte max. 1 % |
 | Nombre max de positions simultanées | | 4 |
 | Fractions d'actions | Autoriser ou non l'achat de fractions (sinon nombre entier, arrondi à l'inférieur) | Non |
 | Priorité si plusieurs signaux le même jour | Classer les candidats par momentum décroissant | — |
@@ -319,7 +322,7 @@ Une ligne par opération, triable et filtrable, exportable en **CSV** (séparate
 | Date | Date d'exécution |
 | Action | Nom de la société + ticker |
 | Opération | Achat / Vente |
-| Motif | Momentum, Breakout, Momentum + Breakout, Stop loss, Stop suiveur, Fin de période |
+| Motif | Momentum, Breakout, Momentum + Breakout, Stop loss, Stop suiveur, Prise de bénéfices, Fin de période |
 | Quantité | Nombre d'actions |
 | Cours d'exécution | Prix unitaire |
 | Montant brut | Quantité × cours |
@@ -508,6 +511,5 @@ Le choix du courtier, l'authentification, le mode « signal du soir → ordre à
 - Découpage période d'apprentissage / période de test.
 - Données intraday.
 - Implémentation des sources EODHD et Interactive Brokers (déjà visibles, grisées, dans l'onglet Paramétrage).
-- Prise de bénéfices (take profit) en complément des stops.
 - Sources d'actualités GDELT et collecteur RSS maison (§7 bis.1).
 - Volet Réel (§9).

@@ -16,6 +16,7 @@ class Position:
     highest: float = 0.0     # highest price reached since the purchase
     stop: float | None = None  # stop level applicable today (computed the day before)
     stop_reason: str = ""
+    target: float | None = None  # take-profit level applicable today (set the day before)
 
 
 @dataclass

@@ -221,3 +221,83 @@ def test_stats():
     assert s["total_return_pct"] == pytest.approx(-0.0424)
     assert s["avg_holding_days"] == 2
     assert s["max_drawdown"] < 0
+
+
+# -- take profit ----------------------------------------------------------------------------
+
+def test_take_profit_sells_at_target():
+    # Bought 4 shares at 106 on day 5; target = 106 x 1.10 = 116.6
+    df = make_prices(BREAKOUT + [(107, 110, 105, 108), (110, 118, 109, 117)])
+    r = run_backtest({"AAA": df}, params(take_profit_enabled=True, take_profit_pct=0.10))
+    assert len(r.trades) == 2
+    sell = r.trades.iloc[1]
+    assert sell["date"] == day(df, 7)
+    assert (sell["side"], sell["reason"]) == ("sell", "Prise de bénéfices")
+    assert sell["price"] == pytest.approx(116.6)
+    assert sell["pnl"] == pytest.approx(4 * 10.6)
+
+
+def test_take_profit_gap_sells_at_open():
+    df = make_prices(BREAKOUT + [(120, 121, 119, 120)])
+    r = run_backtest({"AAA": df}, params(take_profit_enabled=True, take_profit_pct=0.10))
+    sell = r.trades.iloc[1]
+    assert (sell["reason"], sell["price"]) == ("Prise de bénéfices", 120.0)
+
+
+def test_stop_wins_when_stop_and_target_are_touched_the_same_day():
+    # Stop loss 10 % -> 95.4, target 116.6: the bar touches both
+    df = make_prices(BREAKOUT + [(106, 118, 95, 100)])
+    r = run_backtest({"AAA": df}, params(take_profit_enabled=True, take_profit_pct=0.10))
+    sell = r.trades.iloc[1]
+    assert sell["reason"] == "Stop loss"
+    assert sell["price"] == pytest.approx(95.4)
+
+
+def test_take_profit_does_not_apply_on_the_purchase_day():
+    rows = BREAKOUT[:-1] + [(106, 120, 104, 107), (107, 107, 107, 107)]
+    r = run_backtest({"AAA": make_prices(rows)}, params(take_profit_enabled=True, take_profit_pct=0.10))
+    assert len(r.trades) == 1          # the high of the purchase day is ignored
+
+
+def test_take_profit_alone_without_any_stop():
+    df = make_prices(BREAKOUT + [(107, 117, 60, 110)])
+    r = run_backtest({"AAA": df}, params(stop_loss_enabled=False, take_profit_enabled=True,
+                                         take_profit_pct=0.10))
+    assert r.trades.iloc[1]["reason"] == "Prise de bénéfices"
+    assert r.stops.empty
+
+
+# -- position sizing from the maximum loss ----------------------------------------------------
+
+@pytest.mark.parametrize("risk, quantity", [
+    (0.02, 1),    # 2 % of 1 000 € at risk, stop 10 % away -> 200 € -> 1 share at 106
+    (0.04, 3),    # 400 € -> 3 shares
+    (0.10, 4),    # 1 000 € wanted, capped by the 50 % maximum size -> 500 € -> 4 shares
+])
+def test_risk_sizing(risk, quantity):
+    df = make_prices(BREAKOUT + [(107, 107, 107, 107)])
+    r = run_backtest({"AAA": df}, params(sizing_mode="risk", risk_per_trade_pct=risk))
+    assert r.trades.iloc[0]["quantity"] == quantity
+
+
+def test_risk_sizing_loss_matches_the_risk_when_the_stop_is_hit():
+    # 3 shares at 106, stop at 95.4: loss = 3 x 10.6 = 31.8 € <= 4 % of 1 000 €
+    df = make_prices(BREAKOUT + [(105, 105, 95, 96)])
+    r = run_backtest({"AAA": df}, params(sizing_mode="risk", risk_per_trade_pct=0.04))
+    assert r.trades.iloc[1]["pnl"] == pytest.approx(-31.8)
+    assert -r.trades.iloc[1]["pnl"] <= 0.04 * 1000
+
+
+def test_risk_sizing_uses_the_closest_stop_and_needs_one():
+    p = params(sizing_mode="risk", risk_per_trade_pct=0.02, trailing_stop_enabled=True,
+               trailing_stop_pct=0.05)
+    assert p.initial_stop_pct == 0.05 and p.position_budget_pct == pytest.approx(0.4)
+    with pytest.raises(ValueError):
+        params(sizing_mode="risk", stop_loss_enabled=False)
+
+
+def test_old_saved_parameters_still_load():
+    old = {k: v for k, v in params().to_dict().items()
+           if k not in ("take_profit_enabled", "take_profit_pct", "sizing_mode", "risk_per_trade_pct")}
+    restored = StrategyParams.from_dict(old)
+    assert not restored.take_profit_enabled and restored.sizing_mode == "percent"

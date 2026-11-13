@@ -63,6 +63,24 @@ def skipped_table(skipped: pd.DataFrame) -> pd.DataFrame:
     })
 
 
+def _stops_text(p) -> str:
+    parts = []
+    if p.stop_loss_enabled:
+        parts.append(f"stop loss {fmt_pct(p.stop_loss_pct, 1)}")
+    if p.trailing_stop_enabled:
+        parts.append(f"stop suiveur {fmt_pct(p.trailing_stop_pct, 1)}")
+    if p.take_profit_enabled:
+        parts.append(f"prise de bénéfices {fmt_pct(p.take_profit_pct, 1, signed=True)}")
+    return " · ".join(parts) or "aucun"
+
+
+def _sizing_text(p) -> str:
+    if p.sizing_mode == "risk":
+        return (f"perte max. {fmt_pct(p.risk_per_trade_pct, 1)} par trade "
+                f"(plafond {fmt_pct(p.position_size_pct, 0)})")
+    return f"{fmt_pct(p.position_size_pct, 0)} du portefeuille"
+
+
 def summary_rows(run: SimulationRun) -> dict[str, str]:
     """Indicators of a simulation as formatted text (comparison table)."""
     s, p = run.result.stats, run.result.params
@@ -80,6 +98,8 @@ def summary_rows(run: SimulationRun) -> dict[str, str]:
         "Taux de réussite": fmt_pct(s["win_rate"], 1),
         "Gain moyen": fmt_eur_signed(s["avg_gain"]),
         "Perte moyenne": fmt_eur_signed(s["avg_loss"]),
+        "Stops": _stops_text(p),
+        "Taille d'une position": _sizing_text(p),
         "Plateforme": run.result.fee_profile.name,
         "Total des frais": f"{fmt_eur(s['total_fees'])} ({fmt_pct(s['fees_pct_capital'])} du capital)",
         "Perte maximale depuis un sommet": fmt_pct(s["max_drawdown"]),

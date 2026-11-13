@@ -5,6 +5,7 @@ from .params import StrategyParams
 
 REASON_STOP_LOSS = "Stop loss"
 REASON_TRAILING = "Stop suiveur"
+REASON_TAKE_PROFIT = "Prise de bénéfices"
 
 
 def stop_level(entry_price: float, highest: float, params: StrategyParams) -> tuple[float | None, str]:
@@ -20,3 +21,8 @@ def stop_level(entry_price: float, highest: float, params: StrategyParams) -> tu
         if level is None or trailing > level:
             level, reason = trailing, REASON_TRAILING
     return level, reason
+
+
+def target_level(entry_price: float, params: StrategyParams) -> float | None:
+    """Take-profit level, None when the take profit is disabled."""
+    return entry_price * (1.0 + params.take_profit_pct) if params.take_profit_enabled else None
