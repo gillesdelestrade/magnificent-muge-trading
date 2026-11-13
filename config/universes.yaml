@@ -1,0 +1,130 @@
+# Listes d'actions prédéfinies (tickers au format Yahoo Finance).
+# Modifiable à la main : la composition des indices change plusieurs fois par an.
+# Attention : ce sont les sociétés présentes AUJOURD'HUI dans l'indice ; une simulation
+# sur le passé ignore donc celles qui en sont sorties (biais des survivants).
+CAC 40:
+  AC.PA: Accor
+  AI.PA: Air Liquide
+  AIR.PA: Airbus
+  MT.AS: ArcelorMittal
+  CS.PA: AXA
+  BNP.PA: BNP Paribas
+  EN.PA: Bouygues
+  BVI.PA: Bureau Veritas
+  CAP.PA: Capgemini
+  CA.PA: Carrefour
+  ACA.PA: Crédit Agricole
+  BN.PA: Danone
+  DSY.PA: Dassault Systèmes
+  EDEN.PA: Edenred
+  ENGI.PA: Engie
+  EL.PA: EssilorLuxottica
+  ERF.PA: Eurofins Scientific
+  ENX.PA: Euronext
+  RMS.PA: Hermès
+  KER.PA: Kering
+  LR.PA: Legrand
+  OR.PA: L'Oréal
+  MC.PA: LVMH
+  ML.PA: Michelin
+  ORA.PA: Orange
+  RI.PA: Pernod Ricard
+  PUB.PA: Publicis
+  RNO.PA: Renault
+  SAF.PA: Safran
+  SGO.PA: Saint-Gobain
+  SAN.PA: Sanofi
+  SU.PA: Schneider Electric
+  GLE.PA: Société Générale
+  STLAP.PA: Stellantis
+  STMPA.PA: STMicroelectronics
+  HO.PA: Thales
+  TTE.PA: TotalEnergies
+  URW.PA: Unibail-Rodamco-Westfield
+  VIE.PA: Veolia
+  DG.PA: Vinci
+
+# Valeurs du SBF 120 hors CAC 40 (liste indicative, à vérifier). L'univers « SBF 120 »
+# de l'application réunit le CAC 40 ci-dessus et cette liste.
+SBF 120 (hors CAC 40):
+  ADP.PA: Aéroports de Paris
+  AF.PA: Air France-KLM
+  ALO.PA: Alstom
+  ATE.PA: Alten
+  AMUN.PA: Amundi
+  ANTIN.PA: Antin Infrastructure Partners
+  APAM.AS: Aperam
+  ARG.PA: Argan
+  AKE.PA: Arkema
+  AYV.PA: Ayvens
+  BB.PA: Bic
+  BIM.PA: bioMérieux
+  BOL.PA: Bolloré
+  CARM.PA: Carmila
+  CLARI.PA: Clariane
+  COFA.PA: Coface
+  COV.PA: Covivio
+  AM.PA: Dassault Aviation
+  DBG.PA: Derichebourg
+  FGR.PA: Eiffage
+  ELIOR.PA: Elior
+  ELIS.PA: Elis
+  EMEIS.PA: Emeis
+  ERA.PA: Eramet
+  RF.PA: Eurazeo
+  ETL.PA: Eutelsat
+  EXENS.PA: Exosens
+  FDJU.PA: FDJ United
+  FRVIA.PA: Forvia
+  GFC.PA: Gecina
+  GET.PA: Getlink
+  GTT.PA: GTT
+  ICAD.PA: Icade
+  IDL.PA: ID Logistics
+  NK.PA: Imerys
+  ITP.PA: Interparfums
+  IPN.PA: Ipsen
+  IPS.PA: Ipsos
+  DEC.PA: JCDecaux
+  LI.PA: Klépierre
+  MMB.PA: Lagardère
+  MAU.PA: Maurel & Prom
+  MEDCL.PA: Medincell
+  MERY.PA: Mercialys
+  MMT.PA: M6
+  NEX.PA: Nexans
+  NXI.PA: Nexity
+  OPM.PA: OPmobility
+  OVH.PA: OVHcloud
+  PLNW.PA: Planisware
+  PLX.PA: Pluxee
+  RCO.PA: Rémy Cointreau
+  RXL.PA: Rexel
+  RBT.PA: Robertet
+  RUI.PA: Rubis
+  DIM.PA: Sartorius Stedim Biotech
+  SCR.PA: Scor
+  SK.PA: SEB
+  SESG.PA: SES
+  SW.PA: Sodexo
+  SOI.PA: Soitec
+  SOP.PA: Sopra Steria
+  SPIE.PA: Spie
+  STF.PA: Stef
+  TE.PA: Technip Energies
+  TEP.PA: Teleperformance
+  TFI.PA: TF1
+  TKO.PA: Tikehau Capital
+  TRI.PA: Trigano
+  UBI.PA: Ubisoft
+  FR.PA: Valeo
+  VK.PA: Vallourec
+  VLA.PA: Valneva
+  VRLA.PA: Verallia
+  VCT.PA: Vicat
+  VIRP.PA: Virbac
+  VIRI.PA: Viridien
+  VIV.PA: Vivendi
+  VU.PA: VusionGroup
+  MF.PA: Wendel
+  WLN.PA: Worldline

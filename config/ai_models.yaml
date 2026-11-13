@@ -1,0 +1,42 @@
+# Modèles d'IA utilisables pour l'analyse des actualités — modifiable à la main.
+#   input_price / output_price : prix en dollars par million de tokens (tarif standard)
+#   batch_discount   : coefficient appliqué avec l'API Message Batches (0.5 = moitié prix)
+#   knowledge_cutoff : date de fin des connaissances du modèle (AAAA-MM-JJ). Les articles
+#                      antérieurs à cette date peuvent être « connus » du modèle, ce qui fausse
+#                      l'analyse. Laisser vide si inconnue : l'application le signalera.
+# Prix relevés en novembre 2026 : À VÉRIFIER sur https://platform.claude.com/docs/en/pricing
+default: claude-haiku-5-5
+models:
+- id: claude-haiku-5-5
+  label: Claude Haiku 5.5
+  provider: anthropic
+  usage: Par défaut — rapide et économique, adapté à des milliers d'articles.
+  input_price: 0.10
+  output_price: 0.50
+  batch_discount: 0.5
+  knowledge_cutoff:
+- id: claude-sonnet-5-5
+  label: Claude Sonnet 5.5
+  provider: anthropic
+  usage: Analyses plus fines, articles ambigus, contrôle qualité d'un échantillon.
+  input_price: 2.00
+  output_price: 10.00
+  batch_discount: 0.5
+  knowledge_cutoff:
+- id: claude-fable-5-2
+  label: Claude Fable 5.2
+  provider: anthropic
+  usage: Le plus puissant et le plus cher — réservé à de petits échantillons de vérification.
+  input_price: 8.00
+  output_price: 40.00
+  batch_discount: 0.5
+  knowledge_cutoff: 2026-06-30
+- id: llama3.1
+  label: Modèle local (Ollama)
+  provider: ollama
+  usage: Gratuit, tourne sur la machine ; qualité à comparer aux modèles Claude.
+  base_url: http://localhost:11434
+  input_price: 0.0
+  output_price: 0.0
+  batch_discount: 1.0
+  knowledge_cutoff:

@@ -1,0 +1,75 @@
+# Profils de frais des plateformes — modifiable à la main ou depuis l'onglet Paramétrage.
+#
+# Pour chaque tranche :  frais = min(maximum, max(minimum, fixe + pourcentage × montant))
+#   jusqu_a     : montant maximum de l'ordre pour cette tranche (inclus) ; absent = sans plafond
+#   fixe        : en euros
+#   pourcentage : en % du montant (0.09 signifie 0,09 %)
+#   minimum / maximum : en euros (absent = pas de limite)
+# account_type : CTO ou PEA (en PEA, frais plafonnés à 0,5 % du montant de l'ordre).
+# Valeurs relevées sur des comparatifs : À REVÉRIFIER sur les grilles officielles avant usage.
+profiles:
+- name: Trade Republic
+  description: 1 € par ordre, quel que soit le montant.
+  account_type: CTO
+  verified_on: 2026-11-01
+  source_url: https://traderepublic.com/fr-fr
+  brackets:
+  - {fixe: 1.0, pourcentage: 0.0}
+- name: DEGIRO
+  description: 2 € par ordre (1 € de courtage + 1 € de frais de gestion).
+  account_type: CTO
+  verified_on: 2026-11-01
+  source_url: https://www.degiro.fr/tarifs
+  brackets:
+  - {fixe: 2.0, pourcentage: 0.0}
+- name: Bourse Direct
+  description: Forfaits par tranche, puis 0,09 % au-delà de 4 400 €.
+  account_type: CTO
+  verified_on: 2026-11-01
+  source_url: https://www.boursedirect.fr/fr/tarifs
+  brackets:
+  - {jusqu_a: 500, fixe: 0.99, pourcentage: 0.0}
+  - {jusqu_a: 1000, fixe: 1.9, pourcentage: 0.0}
+  - {jusqu_a: 2000, fixe: 2.9, pourcentage: 0.0}
+  - {jusqu_a: 4400, fixe: 3.8, pourcentage: 0.0}
+  - {fixe: 0.0, pourcentage: 0.09}
+- name: BoursoBank – Découverte
+  description: 1,99 € jusqu'à 500 €, puis 0,60 % au-delà (taux relevé sur des comparatifs,
+    à confirmer sur la grille officielle).
+  account_type: CTO
+  verified_on: 2026-11-01
+  source_url: https://www.boursobank.com/bourse/placements-financiers
+  brackets:
+  - {jusqu_a: 500, fixe: 1.99, pourcentage: 0.0}
+  - {fixe: 0.0, pourcentage: 0.6}
+- name: Fortuneo – Starter
+  description: 1er ordre du mois jusqu'à 500 € gratuit, sinon 0,35 % du montant.
+  account_type: CTO
+  verified_on: 2026-11-01
+  source_url: https://www.fortuneo.fr/bourse
+  free_orders_per_month: 1
+  free_orders_max_amount: 500
+  brackets:
+  - {fixe: 0.0, pourcentage: 0.35}
+- name: Interactive Brokers – Fixed
+  description: 0,05 % du montant, minimum 3 € par ordre (taux relevé sur des comparatifs,
+    à confirmer sur la grille officielle).
+  account_type: CTO
+  verified_on: 2026-11-01
+  source_url: https://www.interactivebrokers.ie/fr/pricing/commissions-stocks-europe.php
+  brackets:
+  - {fixe: 0.0, pourcentage: 0.05, minimum: 3.0}
+- name: Personnalisé
+  description: Grille libre, à saisir dans l'onglet Paramétrage.
+  account_type: CTO
+  verified_on: 2026-11-01
+  source_url: ''
+  brackets:
+  - {fixe: 0.0, pourcentage: 0.0}
+- name: Sans frais
+  description: 0 € — pour isoler l'effet de la stratégie seule.
+  account_type: CTO
+  verified_on: 2026-11-01
+  source_url: ''
+  brackets:
+  - {fixe: 0.0, pourcentage: 0.0}
